@@ -197,16 +197,12 @@ def brute_force(fps, d):
   var uf = ds::unionfind::new(len(fps))
   | var i = 0
   | let _ = while (i < len(fps)):
-      do
-        var j = i + 1
-        | let _ = while (j < len(fps)):
-            do
-              uf = if (simhash::distance(fps[i], fps[j]) <= d): ds::unionfind::union(uf, i, j) else: uf
-              | j = j + 1
-            end
-          end
-        | i = i + 1
-      end
+      var j = i + 1
+      | let _ = while (j < len(fps)):
+          uf = if (simhash::distance(fps[i], fps[j]) <= d): ds::unionfind::union(uf, i, j) else: uf
+          | j = j + 1
+        end
+      | i = i + 1
     end
   | ds::unionfind::groups(uf)
 end

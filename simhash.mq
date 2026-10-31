@@ -26,11 +26,9 @@ def _count(tokens):
   | var i = 0
   | let n = len(tokens)
   | let _ = while (i < n):
-      do
-        let t = tokens[i]
-        | counts = set(counts, t, if (has(counts, t)): counts[t] + 1 else: 1)
-        | i = i + 1
-      end
+      let t = tokens[i]
+      | counts = set(counts, t, if (has(counts, t)): counts[t] + 1 else: 1)
+      | i = i + 1
     end
   | counts
 end
@@ -58,18 +56,14 @@ def fingerprint_tokens(tokens):
   | var votes = map(range(0, 63), fn(i): 0;)
   | var i = 0
   | let _ = while (i < len(terms)):
-      do
-        let bits = _token_bits(terms[i], table)
-        | let w = weights[terms[i]]
-        | var b = 0
-        | let _ = while (b < 64):
-            do
-              votes[b] = votes[b] + if (bits[b] == "1"): w else: -w
-              | b = b + 1
-            end
-          end
-        | i = i + 1
-      end
+      let bits = _token_bits(terms[i], table)
+      | let w = weights[terms[i]]
+      | var b = 0
+      | let _ = while (b < 64):
+          votes[b] = votes[b] + if (bits[b] == "1"): w else: -w
+          | b = b + 1
+        end
+      | i = i + 1
     end
   | join(map(votes, fn(v): if (v > 0): "1" else: "0";), "")
 end
@@ -90,10 +84,8 @@ def distance(a, b):
       | var i = 0
       | let n = len(a)
       | let _ = while (i < n):
-          do
-            d = d + if (a[i] != b[i]): 1 else: 0
-            | i = i + 1
-          end
+          d = d + if (a[i] != b[i]): 1 else: 0
+          | i = i + 1
         end
       | d
     end
@@ -118,51 +110,41 @@ def cluster_fingerprints(fps, max_distance):
       | var reps = []
       | var i = 0
       | let _ = while (i < n):
-          do
-            let fp = fps[i]
-            | let _ = if (has(first, fp)):
-                uf = ds::unionfind::union(uf, i, first[fp])
-              else:
-                do
-                  first = set(first, fp, i)
-                  | reps += [i]
-                end
-            | i = i + 1
-          end
+          let fp = fps[i]
+          | let _ = if (has(first, fp)):
+              uf = ds::unionfind::union(uf, i, first[fp])
+            else:
+              do
+                first = set(first, fp, i)
+                | reps += [i]
+              end
+          | i = i + 1
         end
       | let m = len(reps)
       | let blocks = if (max_distance >= 64): 1 else: max_distance + 1
       | var b = 0
       | let _ = while (max_distance > 0 && b < blocks):
-          do
-            let lo = floor(b * 64 / blocks)
-            | let hi = floor((b + 1) * 64 / blocks)
-            | let keyed = sort(map(reps, fn(r): [if (max_distance >= 64): "" else: fps[r][lo:hi], r];))
-            | var s = 0
-            | let _ = while (s < m):
-                do
-                  var e = s
-                  | let _ = while (e < m && keyed[e][0] == keyed[s][0]):
-                      e = e + 1
-                    end
-                  | var p = s
-                  | let _ = while (p < e):
-                      do
-                        var q = p + 1
-                        | let _ = while (q < e):
-                            do
-                              uf = if (distance(fps[keyed[p][1]], fps[keyed[q][1]]) <= max_distance): ds::unionfind::union(uf, keyed[p][1], keyed[q][1]) else: uf
-                              | q = q + 1
-                            end
-                          end
-                        | p = p + 1
-                      end
-                    end
-                  | s = e
+          let lo = floor(b * 64 / blocks)
+          | let hi = floor((b + 1) * 64 / blocks)
+          | let keyed = sort(map(reps, fn(r): [if (max_distance >= 64): "" else: fps[r][lo:hi], r];))
+          | var s = 0
+          | let _ = while (s < m):
+              var e = s
+              | let _ = while (e < m && keyed[e][0] == keyed[s][0]):
+                  e = e + 1
                 end
-              end
-            | b = b + 1
-          end
+              | var p = s
+              | let _ = while (p < e):
+                  var q = p + 1
+                  | let _ = while (q < e):
+                      uf = if (distance(fps[keyed[p][1]], fps[keyed[q][1]]) <= max_distance): ds::unionfind::union(uf, keyed[p][1], keyed[q][1]) else: uf
+                      | q = q + 1
+                    end
+                  | p = p + 1
+                end
+              | s = e
+            end
+          | b = b + 1
         end
       | ds::unionfind::groups(uf)
     end
