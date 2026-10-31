@@ -1,0 +1,173 @@
+import "ds"
+
+# Near-duplicate detection with SimHash: a 64-bit fingerprint where similar texts get fingerprints
+# that differ in few bits.
+#
+# A fingerprint is a string of 64 characters, each "0" or "1". The distance between two
+# fingerprints is the number of positions where they differ.
+
+def _nibble_bits():
+  {
+    "0": "0000", "1": "0001", "2": "0010", "3": "0011",
+    "4": "0100", "5": "0101", "6": "0110", "7": "0111",
+    "8": "1000", "9": "1001", "a": "1010", "b": "1011",
+    "c": "1100", "d": "1101", "e": "1110", "f": "1111"
+  }
+end
+
+# The first 64 bits of the token's MD5 digest.
+def _token_bits(token, table):
+  let hex = md5(token)
+  | join(map(range(0, 15), fn(i): table[hex[i]];), "")
+end
+
+def _count(tokens):
+  var counts = {}
+  | var i = 0
+  | let n = len(tokens)
+  | let _ = while (i < n):
+      do
+        let t = tokens[i]
+        | counts = set(counts, t, if (has(counts, t)): counts[t] + 1 else: 1)
+        | i = i + 1
+      end
+    end
+  | counts
+end
+
+# Splits text into lowercase words on anything that is not a letter or a digit.
+def tokenize(text):
+  filter(split(downcase(text), "[\\W_]+"), fn(s): !is_empty(s);)
+end
+
+# Returns the runs of `n` consecutive tokens joined by a space, or the tokens themselves when there
+# are fewer than `n`.
+def shingles(tokens, n):
+  if (n <= 1 || len(tokens) < n):
+    tokens
+  else:
+    map(range(0, len(tokens) - n), fn(i): join(slice(tokens, i, i + n), " ");)
+end
+
+# Returns the fingerprint of an array of tokens. A token that occurs more often pulls harder on the
+# bits. No tokens give 64 zeros.
+def fingerprint_tokens(tokens):
+  let table = _nibble_bits()
+  | let weights = _count(tokens)
+  | let terms = keys(weights)
+  | var votes = map(range(0, 63), fn(i): 0;)
+  | var i = 0
+  | let _ = while (i < len(terms)):
+      do
+        let bits = _token_bits(terms[i], table)
+        | let w = weights[terms[i]]
+        | var b = 0
+        | let _ = while (b < 64):
+            do
+              votes[b] = votes[b] + if (bits[b] == "1"): w else: -w
+              | b = b + 1
+            end
+          end
+        | i = i + 1
+      end
+    end
+  | join(map(votes, fn(v): if (v > 0): "1" else: "0";), "")
+end
+
+# Returns the fingerprint of a text, word by word.
+def fingerprint(text): fingerprint_tokens(tokenize(text));
+
+# Returns the fingerprint of a text over runs of `n` words, which also reflects word order.
+def fingerprint_shingles(text, n): fingerprint_tokens(shingles(tokenize(text), n));
+
+# Returns the number of positions where two fingerprints differ.
+def distance(a, b):
+  if (len(a) != len(b)):
+    error("simhash: fingerprints differ in length: " + to_string(len(a)) + " and " + to_string(len(b)))
+  else:
+    do
+      var d = 0
+      | var i = 0
+      | let n = len(a)
+      | let _ = while (i < n):
+          do
+            d = d + if (a[i] != b[i]): 1 else: 0
+            | i = i + 1
+          end
+        end
+      | d
+    end
+end
+
+# Returns true if two fingerprints differ in at most `max_distance` positions.
+def near(a, b, max_distance): distance(a, b) <= max_distance;
+
+# Groups fingerprints whose distance chains within `max_distance`, and returns the groups as arrays
+# of indexes, ordered by their smallest index.
+#
+# Two fingerprints within `max_distance` of each other always share one of `max_distance + 1`
+# slices of their bits, so only fingerprints that share a slice are compared.
+def cluster_fingerprints(fps, max_distance):
+  if (max_distance < 0 || max_distance > 64):
+    error("simhash: max distance must be between 0 and 64: " + to_string(max_distance))
+  else:
+    do
+      let n = len(fps)
+      | var uf = ds::unionfind::new(n)
+      | var first = {}
+      | var reps = []
+      | var i = 0
+      | let _ = while (i < n):
+          do
+            let fp = fps[i]
+            | let _ = if (has(first, fp)):
+                uf = ds::unionfind::union(uf, i, first[fp])
+              else:
+                do
+                  first = set(first, fp, i)
+                  | reps += [i]
+                end
+            | i = i + 1
+          end
+        end
+      | let m = len(reps)
+      | let blocks = if (max_distance >= 64): 1 else: max_distance + 1
+      | var b = 0
+      | let _ = while (max_distance > 0 && b < blocks):
+          do
+            let lo = floor(b * 64 / blocks)
+            | let hi = floor((b + 1) * 64 / blocks)
+            | let keyed = sort(map(reps, fn(r): [if (max_distance >= 64): "" else: fps[r][lo:hi], r];))
+            | var s = 0
+            | let _ = while (s < m):
+                do
+                  var e = s
+                  | let _ = while (e < m && keyed[e][0] == keyed[s][0]):
+                      e = e + 1
+                    end
+                  | var p = s
+                  | let _ = while (p < e):
+                      do
+                        var q = p + 1
+                        | let _ = while (q < e):
+                            do
+                              uf = if (distance(fps[keyed[p][1]], fps[keyed[q][1]]) <= max_distance): ds::unionfind::union(uf, keyed[p][1], keyed[q][1]) else: uf
+                              | q = q + 1
+                            end
+                          end
+                        | p = p + 1
+                      end
+                    end
+                  | s = e
+                end
+              end
+            | b = b + 1
+          end
+        end
+      | ds::unionfind::groups(uf)
+    end
+end
+
+# Groups texts whose fingerprints chain within `max_distance`, as arrays of indexes ordered by their
+# smallest index. Texts that match nothing come back as groups of one.
+def clusters(texts, max_distance): cluster_fingerprints(map(texts, fn(t): fingerprint(t);), max_distance);
