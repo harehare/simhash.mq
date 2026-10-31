@@ -215,12 +215,12 @@ end
 
 def test_clusters_match_a_full_comparison():
   let fps = spread_fps()
-  | let _ = foreach(d, [0, 1, 2, 3, 5, 8, 13, 20, 40]): assert_eq(simhash::cluster_fingerprints(fps, d), brute_force(fps, d));
-  | None
+  | let mismatched = filter([0, 1, 2, 3, 5, 8, 13, 20, 40], fn(d): simhash::cluster_fingerprints(fps, d) != brute_force(fps, d);)
+  | assert_eq(mismatched, [])
 end
 
 def test_clusters_match_a_full_comparison_on_unrelated_fingerprints():
   let fps = map(range(0, 24), fn(i): random_fp(i);)
-  | let _ = foreach(d, [0, 16, 20, 22, 23, 24, 25, 26, 30]): assert_eq(simhash::cluster_fingerprints(fps, d), brute_force(fps, d));
-  | None
+  | let mismatched = filter([0, 16, 20, 22, 23, 24, 25, 26, 30], fn(d): simhash::cluster_fingerprints(fps, d) != brute_force(fps, d);)
+  | assert_eq(mismatched, [])
 end
