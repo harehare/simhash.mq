@@ -6,21 +6,6 @@ import "ds"
 # A fingerprint is a string of 64 characters, each "0" or "1". The distance between two
 # fingerprints is the number of positions where they differ.
 
-def _nibble_bits():
-  {
-    "0": "0000", "1": "0001", "2": "0010", "3": "0011",
-    "4": "0100", "5": "0101", "6": "0110", "7": "0111",
-    "8": "1000", "9": "1001", "a": "1010", "b": "1011",
-    "c": "1100", "d": "1101", "e": "1110", "f": "1111"
-  }
-end
-
-# The first 64 bits of the token's MD5 digest.
-def _token_bits(token, table):
-  let hex = md5(token)
-  | join(map(range(0, 15), fn(i): table[hex[i]];), "")
-end
-
 def _count(tokens):
   var counts = {}
   | var i = 0
@@ -48,19 +33,21 @@ def shingles(tokens, n):
 end
 
 # Returns the fingerprint of an array of tokens. A token that occurs more often pulls harder on the
-# bits. No tokens give 64 zeros.
+# bits. No tokens give 64 zeros. A token's 64 bits are the low 32 bits of two seeded `hash` values.
 def fingerprint_tokens(tokens):
-  let table = _nibble_bits()
+  let powers = map(range(0, 31), fn(i): pow(2, i);)
   | let weights = _count(tokens)
   | let terms = keys(weights)
   | var votes = map(range(0, 63), fn(i): 0;)
   | var i = 0
   | let _ = while (i < len(terms)):
-      let bits = _token_bits(terms[i], table)
+      let high = hash(terms[i], 1) % 4294967296
+      | let low = hash(terms[i], 2) % 4294967296
       | let w = weights[terms[i]]
       | var b = 0
-      | let _ = while (b < 64):
-          votes[b] = votes[b] + if (bits[b] == "1"): w else: -w
+      | let _ = while (b < 32):
+          votes[b] = votes[b] + if (band(high, powers[b]) > 0): w else -w
+          | votes[b + 32] = votes[b + 32] + if (band(low, powers[b]) > 0): w else -w
           | b = b + 1
         end
       | i = i + 1

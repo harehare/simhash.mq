@@ -11,7 +11,7 @@ def ones(): repeat("1", 64);
 # A fingerprint made of `n` leading ones and zeros after it.
 def leading_ones(n): repeat("1", n) + repeat("0", 64 - n);
 
-# A deterministic pseudo-random fingerprint for seed i, built from an MD5 digest.
+# A deterministic pseudo-random fingerprint for seed i, built from the token hashes.
 def random_fp(i):
   simhash::fingerprint_tokens(["seed" + to_string(i), "salt" + to_string(i * 7 + 1), "x" + to_string(i % 5)])
 end
@@ -74,10 +74,16 @@ def test_fingerprint_of_nothing_is_all_zeros():
   | assert_eq(simhash::fingerprint_tokens([]), zeros())
 end
 
-def test_fingerprint_of_one_word_is_the_start_of_its_md5():
-  let fp = simhash::fingerprint("cat")
-  | assert_true(is_bit_string(fp))
-  | assert_eq(fp[0:8], "11010000")
+# The 32 low bits of a number, lowest first, as a string of "0" and "1".
+def low_bits_first(n): join(map(range(0, 31), fn(b): to_string(floor(n / pow(2, b)) % 2);), "");
+
+def test_fingerprint_of_one_word_is_the_bits_of_its_two_hashes():
+  let expected = low_bits_first(hash("cat", 1) % 4294967296) + low_bits_first(hash("cat", 2) % 4294967296)
+  | assert_eq(simhash::fingerprint("cat"), expected)
+end
+
+def test_fingerprint_of_one_word_is_pinned():
+  assert_eq(simhash::fingerprint("cat"), "1000111111000010111010010110011100010101010000111001001011001010")
 end
 
 def test_fingerprint_weights_repeated_words():
