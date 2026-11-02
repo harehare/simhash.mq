@@ -32,28 +32,46 @@ def shingles(tokens, n):
     map(range(0, len(tokens) - n), fn(i): join(slice(tokens, i, i + n), " ");)
 end
 
-# Returns the fingerprint of an array of tokens. A token that occurs more often pulls harder on the
-# bits. No tokens give 64 zeros. A token's 64 bits are the low 32 bits of two seeded `hash` values.
-def fingerprint_tokens(tokens):
-  let powers = map(range(0, 31), fn(i): pow(2, i);)
+# Votes for the 64 bits of a non-empty array of tokens, 32 bits from each of two seeded `hash`
+# values. Counting 64 bits one by one is slow, so several counters share one number: a group of
+# `per` bits is looked up in a table that spreads them into fields of `width` bits, and adding such
+# numbers counts all of the group's bits at once. A field never exceeds the number of tokens, which
+# is below 2^width, so the fields do not carry into each other.
+def _vote(tokens, total):
+  let width = bit_length(total)
+  | let per = min(floor(53 / width), 6)
+  | let groups = ceil(32 / per)
+  | let size = pow(2, per)
+  | let spread = fold(range(0, per - 1), [0], fn(table, j): table + map(table, fn(v): v + pow(2, width * j););)
+  | let divisors = map(range(0, groups - 1), fn(g): pow(2, per * g);)
   | let weights = _count(tokens)
   | let terms = keys(weights)
-  | var votes = map(range(0, 63), fn(i): 0;)
+  | var counts = map(range(0, 2 * groups - 1), fn(i): 0;)
   | var i = 0
   | let _ = while (i < len(terms)):
       let high = hash(terms[i], 1) % 4294967296
       | let low = hash(terms[i], 2) % 4294967296
       | let w = weights[terms[i]]
-      | var b = 0
-      | let _ = while (b < 32):
-          votes[b] = votes[b] + if (band(high, powers[b]) > 0): w else -w
-          | votes[b + 32] = votes[b + 32] + if (band(low, powers[b]) > 0): w else -w
-          | b = b + 1
+      | var g = 0
+      | let _ = while (g < groups):
+          counts[g] = counts[g] + w * spread[floor(high / divisors[g]) % size]
+          | counts[groups + g] = counts[groups + g] + w * spread[floor(low / divisors[g]) % size]
+          | g = g + 1
         end
       | i = i + 1
     end
-  | join(map(votes, fn(v): if (v > 0): "1" else: "0";), "")
+  | let shifts = map(range(0, per - 1), fn(j): pow(2, width * j);)
+  | let modulus = pow(2, width)
+  | join(map(range(0, 63), fn(k):
+      let b = k % 32
+      | let field = floor(counts[(k - b) / 32 * groups + floor(b / per)] / shifts[b % per]) % modulus
+      | if (field * 2 > total): "1" else: "0";
+    ), "")
 end
+
+# Returns the fingerprint of an array of tokens. A token that occurs more often pulls harder on the
+# bits. No tokens give 64 zeros.
+def fingerprint_tokens(tokens): if (is_empty(tokens)): repeat("0", 64) else: _vote(tokens, len(tokens));
 
 # Returns the fingerprint of a text, word by word.
 def fingerprint(text): fingerprint_tokens(tokenize(text));

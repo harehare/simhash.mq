@@ -86,6 +86,33 @@ def test_fingerprint_of_one_word_is_pinned():
   assert_eq(simhash::fingerprint("cat"), "1000111111000010111010010110011100010101010000111001001011001010")
 end
 
+# Votes for each bit one token at a time: the reference the packed counting must agree with.
+def reference_fingerprint(tokens):
+  let votes = map(range(0, 63), fn(k):
+    let b = k % 32
+    | let seed = if (k < 32): 1 else: 2
+    | fold(tokens, 0, fn(sum, t): sum + (if (floor((hash(t, seed) % 4294967296) / pow(2, b)) % 2 == 1): 1 else: -1););
+  )
+  | join(map(votes, fn(v): if (v > 0): "1" else: "0";), "")
+end
+
+def repeated(words, times): flatten(map(range(0, times - 1), fn(i): words;));
+
+def test_fingerprint_agrees_with_counting_every_bit_alone():
+  let cases = [
+    ["cat"],
+    ["cat", "dog"],
+    ["a", "b", "c", "d", "e"],
+    map(range(0, 29), fn(i): "word" + to_string(i);),
+    ["cat", "cat", "cat", "dog"],
+    repeated(["x", "y", "z"], 40),
+    repeated(map(range(0, 19), fn(i): "term" + to_string(i);), 450),
+    repeated(["only"], 9000)
+  ]
+  | let bad = filter(range(0, len(cases) - 1), fn(i): simhash::fingerprint_tokens(cases[i]) != reference_fingerprint(cases[i]);)
+  | assert_eq(bad, [])
+end
+
 def test_fingerprint_weights_repeated_words():
   let heavy = simhash::fingerprint_tokens(["cat", "cat", "cat", "dog"])
   | assert_eq(heavy, simhash::fingerprint_tokens(["cat"]))
