@@ -21,4 +21,6 @@ jobs:
         with:
           bins: test
       - name: Run tests
-        run: mq-test -L vendor/ds.mq simhash_tests.mq
+        run: |
+          mq-test -L vendor/ds.mq -L . simhash_tests.mq
+          mq-test -L vendor/ds.mq -L . minhash_tests.mq

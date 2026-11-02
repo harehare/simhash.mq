@@ -1,0 +1,121 @@
+import "ds"
+| import "simhash"
+
+# Near-duplicate detection with MinHash: a signature of `k` numbers where the share of positions two
+# signatures agree on estimates the Jaccard similarity of the texts' word sets.
+#
+# A signature is an array of `k` numbers, each the smallest value of one seeded `hash` over the
+# tokens. Unlike SimHash, repeated tokens count once and only the set of tokens matters.
+
+# The value of a position when there are no tokens, one above any hash value.
+def _empty(): 4294967296;
+
+# Returns the signature of an array of tokens, with `k` positions. No tokens give `k` copies of the
+# same value, so they all match each other.
+def signature_tokens(tokens, k):
+  if (k < 1):
+    error("minhash: signature length must be at least 1: " + to_string(k))
+  else:
+    map(range(1, k), fn(i): fold(tokens, _empty(), fn(m, t): min(m, hash(t, i) % 4294967296););)
+end
+
+# Returns the signature of a text, word by word.
+def signature(text, k): signature_tokens(simhash::tokenize(text), k);
+
+# Returns the signature of a text over runs of `n` words, which also reflects word order.
+def signature_shingles(text, k, n): signature_tokens(simhash::shingles(simhash::tokenize(text), n), k);
+
+# Returns the share of positions where two signatures agree: an estimate of the Jaccard similarity.
+def similarity(a, b):
+  if (len(a) != len(b)):
+    error("minhash: signatures differ in length: " + to_string(len(a)) + " and " + to_string(len(b)))
+  else:
+    do
+      var same = 0
+      | var i = 0
+      | let n = len(a)
+      | let _ = while (i < n):
+          same = same + if (a[i] == b[i]): 1 else: 0
+          | i = i + 1
+        end
+      | same / n
+    end
+end
+
+# Returns true if the estimated similarity of two signatures is at least `min_similarity`.
+def near(a, b, min_similarity): similarity(a, b) >= min_similarity;
+
+# Returns how many positions go in one band: the largest divisor `r` of `k` for which a pair of
+# similarity `threshold` is a candidate in at least about half of the cases, that is
+# (1 / bands)^(1 / r) <= threshold. A smaller `r` finds more pairs and compares more of them.
+def _rows(k, threshold):
+  fold(range(1, k), 1, fn(best, r):
+    if (k % r == 0 && pow(r / k, 1 / r) <= threshold): r else: best;
+  )
+end
+
+# Groups signatures whose similarity chains at `min_similarity` or more, and returns the groups as
+# arrays of indexes, ordered by their smallest index.
+#
+# The signatures are cut into bands, and only those that agree on a whole band are compared, so a
+# pair that is only just similar enough can be missed. Every pair that is compared is checked, so
+# no group joins signatures that are not chained by similar pairs.
+def cluster_signatures(sigs, min_similarity):
+  if (min_similarity < 0 || min_similarity > 1):
+    error("minhash: minimum similarity must be between 0 and 1: " + to_string(min_similarity))
+  else:
+    do
+      let n = len(sigs)
+      | var uf = ds::unionfind::new(n)
+      | var first = {}
+      | var reps = []
+      | var i = 0
+      | let _ = while (i < n):
+          let key = join(sigs[i], ",")
+          | let _ = if (has(first, key)):
+              uf = ds::unionfind::union(uf, i, first[key])
+            else:
+              do
+                first = set(first, key, i)
+                | reps += [i]
+              end
+          | i = i + 1
+        end
+      | let m = len(reps)
+      | let k = if (n == 0): 1 else: len(sigs[0])
+      | let rows = _rows(k, min_similarity)
+      | let bands = k / rows
+      | var b = 0
+      | let _ = while (min_similarity == 0 && b < m - 1):
+          uf = ds::unionfind::union(uf, reps[b], reps[b + 1])
+          | b = b + 1
+        end
+      | b = 0
+      | let _ = while (min_similarity > 0 && min_similarity < 1 && b < bands):
+          let keyed = sort(map(reps, fn(r): [join(slice(sigs[r], b * rows, (b + 1) * rows), ","), r];))
+          | var s = 0
+          | let _ = while (s < m):
+              var e = s
+              | let _ = while (e < m && keyed[e][0] == keyed[s][0]):
+                  e = e + 1
+                end
+              | var p = s
+              | let _ = while (p < e):
+                  var q = p + 1
+                  | let _ = while (q < e):
+                      uf = if (similarity(sigs[keyed[p][1]], sigs[keyed[q][1]]) >= min_similarity): ds::unionfind::union(uf, keyed[p][1], keyed[q][1]) else: uf
+                      | q = q + 1
+                    end
+                  | p = p + 1
+                end
+              | s = e
+            end
+          | b = b + 1
+        end
+      | ds::unionfind::groups(uf)
+    end
+end
+
+# Groups texts whose signatures chain at `min_similarity` or more, as arrays of indexes ordered by
+# their smallest index. Texts that match nothing come back as groups of one.
+def clusters(texts, min_similarity, k): cluster_signatures(map(texts, fn(t): signature(t, k);), min_similarity);

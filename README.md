@@ -52,6 +52,26 @@ A fingerprint is a string of 64 characters, each `"0"` or `"1"`, and the distanc
 
 Groups are ordered by their smallest index, and a text that matches nothing is a group of one. Texts with no words get 64 zeros, so they all land in one group.
 
+## MinHash
+
+`minhash.mq` is the other classic approach. A signature is `k` numbers (the smallest seeded `hash` over a text's words), and the share of positions two signatures agree on estimates the Jaccard similarity of their word sets. It ignores order and repeated words.
+
+```sh
+mq -L . -L vendor/ds.mq -I null 'import "minhash" | minhash::clusters(["a b c d", "a b c e", "x y z"], 0.5, 128)'
+```
+
+| Function | Description |
+| --- | --- |
+| `signature(text, k)` | signature of the words in a text, with `k` positions |
+| `signature_shingles(text, k, n)` | signature over runs of `n` words |
+| `signature_tokens(tokens, k)` | signature of an array of tokens |
+| `similarity(a, b)` | share of equal positions, between 0 and 1 |
+| `near(a, b, min_similarity)` | whether the estimated similarity is at least `min_similarity` |
+| `clusters(texts, min_similarity, k)` | groups of indexes whose signatures chain at `min_similarity` or more |
+| `cluster_signatures(sigs, min_similarity)` | the same, for signatures you already have |
+
+Unlike the SimHash clustering, this one is approximate: signatures are cut into bands and only those that agree on a whole band are compared, so a pair that is only just similar enough can be missed. A larger `k` makes both the estimate and the banding sharper.
+
 ## Notes
 
 - Clustering is exact: it returns the groups a comparison of every pair would, but only compares fingerprints that share a slice of their bits. `max_distance + 1` slices are used, so very large distances compare more pairs.
@@ -62,8 +82,10 @@ Groups are ordered by their smallest index, and a text that matches nothing is a
 
 ```sh
 git submodule update --init
-mq-test -L vendor/ds.mq simhash_tests.mq
+mq-test -L vendor/ds.mq -L . simhash_tests.mq
+mq-test -L vendor/ds.mq -L . minhash_tests.mq
 mq-bench -L vendor/ds.mq -L . simhash_bench.mq
+mq-bench -L vendor/ds.mq -L . minhash_bench.mq
 ```
 
 One of the goals of this module is also to check mq for performance problems, so it comes with a benchmark in `simhash_bench.mq`.

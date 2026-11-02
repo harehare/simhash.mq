@@ -1,0 +1,20 @@
+import "minhash"
+
+# Each `_small` / `_large` pair runs the same work at two sizes. A time ratio close to the size ratio
+# means the work is linear; a ratio near its square means something copies on every step.
+
+def signatures(n):
+  map(range(0, n - 1), fn(i): minhash::signature_tokens(["seed" + to_string(i % 40), "salt" + to_string(i % 17), "x" + to_string(i)], 32);)
+end
+
+def texts(n):
+  map(range(0, n - 1), fn(i): "word" + to_string(i % 23) + " word" + to_string(i % 11) + " word" + to_string(i % 7) + " shared text number " + to_string(i % 5);)
+end
+
+def bench_signature_small_run(): len(map(texts(100), fn(t): minhash::signature(t, 32);));
+
+def bench_signature_large_run(): len(map(texts(400), fn(t): minhash::signature(t, 32);));
+
+def bench_cluster_small(): len(minhash::cluster_signatures(signatures(200), 0.5));
+
+def bench_cluster_large(): len(minhash::cluster_signatures(signatures(800), 0.5));
