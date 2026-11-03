@@ -16,7 +16,13 @@ def signature_tokens(tokens, k):
   if (k < 1):
     error("minhash: signature length must be at least 1: " + to_string(k))
   else:
-    map(range(1, k), fn(i): fold(tokens, _empty(), fn(m, t): min(m, hash(t, i) % 4294967296););)
+    if (is_empty(tokens)):
+      repeat([_empty()], k)
+    else:
+      do
+        let distinct = keys(dict(map(tokens, fn(t): [t, 1];)))
+        | map(range(1, k), fn(i): sort(map(distinct, fn(t): hash(t, i) % 4294967296;))[0];)
+      end
 end
 
 # Returns the signature of a text, word by word.
@@ -44,6 +50,20 @@ end
 
 # Returns true if the estimated similarity of two signatures is at least `min_similarity`.
 def near(a, b, min_similarity): similarity(a, b) >= min_similarity;
+
+# Returns a signature as bytes: four per position, then a 255 that keeps a run of equal positions
+# apart from the next one. A value above 2^32 - 1, such as the one for no tokens, packs as 2^32 - 1.
+def _encode(sig): fold(sig, to_bytes([]), fn(acc, v): acc + pack("u32be", v) + to_bytes([255]););
+
+# Returns the number of positions where two signatures given as bytes agree. Xoring them gives four
+# 0 bytes for a position where they agree, and `mask` turns the 255 after each position back into
+# 255, so only a whole position can be taken out and none is read across two.
+def _agreeing(a, b, mask):
+  do
+    let x = xor(xor(a, b), mask)
+    | (len(x) - len(replace(x, to_bytes([0, 0, 0, 0, 255]), to_bytes([])))) / 5
+  end
+end
 
 # Returns how many positions go in one band: the largest divisor `r` of `k` for which a pair of
 # similarity `threshold` is a candidate in at least about half of the cases, that is
@@ -83,6 +103,8 @@ def cluster_signatures(sigs, min_similarity):
         end
       | let m = len(reps)
       | let k = if (n == 0): 1 else: len(sigs[0])
+      | let enc = map(sigs, _encode)
+      | let mask = _encode(map(range(1, k), fn(i): 0;))
       | let rows = _rows(k, min_similarity)
       | let bands = k / rows
       | var b = 0
@@ -101,9 +123,12 @@ def cluster_signatures(sigs, min_similarity):
                 end
               | var p = s
               | let _ = while (p < e):
-                  var q = p + 1
+                  let ip = keyed[p][1]
+                  | let ep = enc[ip]
+                  | var q = p + 1
                   | let _ = while (q < e):
-                      uf = if (similarity(sigs[keyed[p][1]], sigs[keyed[q][1]]) >= min_similarity): ds::unionfind::union(uf, keyed[p][1], keyed[q][1]) else: uf
+                      let iq = keyed[q][1]
+                      | uf = if (_agreeing(ep, enc[iq], mask) / k >= min_similarity): ds::unionfind::union(uf, ip, iq) else: uf
                       | q = q + 1
                     end
                   | p = p + 1

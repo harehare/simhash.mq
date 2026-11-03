@@ -4,7 +4,7 @@
 > This project is currently under active development. APIs and features may change without notice.
 
 > [!NOTE]
-> This module needs the development version of mq, which is not released yet: it uses the `hash` builtin and `band` on numbers.
+> This module needs the development version of mq, which is not released yet: it uses the `hash` builtin, `band` on numbers, and `xor`, `replace` and `pack` on bytes.
 
 Near-duplicate detection for [mq](https://github.com/harehare/mq), as a module. A SimHash fingerprint is 64 bits where similar texts get fingerprints that differ in few bits, so duplicates can be found without comparing every pair of texts.
 
