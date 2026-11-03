@@ -19,8 +19,15 @@ def _count(tokens):
 end
 
 # Splits text into lowercase words on anything that is not a letter or a digit.
+#
+# Text that is all ASCII is split with a plain class, which is several times faster than the Unicode
+# one. Splitting leaves an empty string only at the start and the end, so those are cut off.
 def tokenize(text):
-  filter(split(downcase(text), "[\\W_]+"), fn(s): !is_empty(s);)
+  let lower = downcase(text)
+  | let parts = split(lower, if (len(lower) == utf8bytelen(lower)): "[^a-z0-9]+" else: "[\\W_]+")
+  | let n = len(parts)
+  | let from = if (parts[0] == ""): 1 else: 0
+  | parts[from:if (n > from && parts[n - 1] == ""): n - 1 else: n]
 end
 
 # Returns the runs of `n` consecutive tokens joined by a space, or the tokens themselves when there
@@ -32,79 +39,94 @@ def shingles(tokens, n):
     map(range(0, len(tokens) - n), fn(i): join(slice(tokens, i, i + n), " ");)
 end
 
-# Votes for the 64 bits of a non-empty array of tokens, 32 bits from each of two seeded `hash`
-# values. Counting 64 bits one by one is slow, so several counters share one number: a group of
-# `per` bits is looked up in a table that spreads them into fields of `width` bits, and adding such
-# numbers counts all of the group's bits at once. A field never exceeds the number of tokens, which
-# is below 2^width, so the fields do not carry into each other.
-def _vote(tokens, total):
-  let width = bit_length(total)
-  | let per = min(floor(53 / width), 6)
+# Returns what `_vote` needs for counters of `width` bits: a group of `per` bits is looked up in a
+# table that spreads them into fields of `width` bits, and adding such numbers counts all of the
+# group's bits at once. Besides `per`, the number of groups in 32 bits, the table size, the spread
+# table, the divisors that cut a number into groups, and for every spread value the bits it holds
+# written out as characters.
+def _tables(width):
+  let per = min(floor(53 / width), 6)
   | let groups = ceil(32 / per)
-  | let size = pow(2, per)
   | let spread = fold(range(0, per - 1), [0], fn(table, j): table + map(table, fn(v): v + pow(2, width * j););)
-  | let divisors = map(range(0, groups - 1), fn(g): pow(2, per * g);)
-  | let weights = _count(tokens)
-  | let terms = keys(weights)
-  | var counts = map(range(0, 2 * groups - 1), fn(i): 0;)
-  | var i = 0
-  | let _ = while (i < len(terms)):
-      let high = hash(terms[i], 1) % 4294967296
-      | let low = hash(terms[i], 2) % 4294967296
-      | let w = weights[terms[i]]
-      | var g = 0
-      | let _ = while (g < groups):
-          counts[g] = counts[g] + w * spread[floor(high / divisors[g]) % size]
-          | counts[groups + g] = counts[groups + g] + w * spread[floor(low / divisors[g]) % size]
-          | g = g + 1
-        end
-      | i = i + 1
-    end
-  | let shifts = map(range(0, per - 1), fn(j): pow(2, width * j);)
-  | let modulus = pow(2, width)
-  | join(map(range(0, 63), fn(k):
-      let b = k % 32
-      | let field = floor(counts[(k - b) / 32 * groups + floor(b / per)] / shifts[b % per]) % modulus
-      | if (field * 2 > total): "1" else: "0";
-    ), "")
+  | [
+      width,
+      per,
+      groups,
+      pow(2, per),
+      spread,
+      map(range(0, groups - 1), fn(g): pow(2, per * g);),
+      dict(map(range(0, pow(2, per) - 1), fn(v): [to_string(spread[v]), join(map(range(0, per - 1), fn(j): if (floor(v / pow(2, j)) % 2 == 1): "1" else: "0";), "")];))
+    ]
 end
+
+# The tables for up to 255 tokens, which is what nearly all texts need.
+let _small = _tables(8)
+
+# Votes for the 64 bits of a non-empty array of tokens, 32 bits from each of two seeded `hash`
+# values. Counting 64 bits one by one is slow, so several counters share one number, as `_tables`
+# describes. A field never exceeds the number of tokens, which is below 2^width, so the fields do not
+# carry into each other. A bit is 1 when its field is more than half of `total`, and adding
+# 2^(width - 1) - floor(total / 2) - 1 to every field at once makes that the top bit of the field,
+# so one `band` reads all the bits of a group, and the table turns them into characters.
+| def _vote(tokens, total):
+    let t = if (total < 256): _small else: _tables(bit_length(total))
+    | let width = t[0]
+    | let groups = t[2]
+    | let size = t[3]
+    | let spread = t[4]
+    | let divisors = t[5]
+    | let weights = _count(tokens)
+    | let terms = keys(weights)
+    | var counts = map(range(0, 2 * groups - 1), fn(i): 0;)
+    | var i = 0
+    | let _ = while (i < len(terms)):
+        let high = hash(terms[i], 1) % 4294967296
+        | let low = hash(terms[i], 2) % 4294967296
+        | let w = weights[terms[i]]
+        | var g = 0
+        | let _ = while (g < groups):
+            counts[g] = counts[g] + w * spread[floor(high / divisors[g]) % size]
+            | counts[groups + g] = counts[groups + g] + w * spread[floor(low / divisors[g]) % size]
+            | g = g + 1
+          end
+        | i = i + 1
+      end
+    | let ones = spread[size - 1]
+    | let top = pow(2, width - 1)
+    | let lift = (top - floor(total / 2) - 1) * ones
+    | let mask = top * ones
+    | let bits = map(counts, fn(c): t[6][to_string(band(c + lift, mask) / top)];)
+    | join(bits[0:groups], "")[0:32] + join(bits[groups:], "")[0:32]
+  end
 
 # Returns the fingerprint of an array of tokens. A token that occurs more often pulls harder on the
 # bits. No tokens give 64 zeros.
-def fingerprint_tokens(tokens): if (is_empty(tokens)): repeat("0", 64) else: _vote(tokens, len(tokens));
+| def fingerprint_tokens(tokens): if (is_empty(tokens)): repeat("0", 64) else: _vote(tokens, len(tokens));
 
 # Returns the fingerprint of a text, word by word.
-def fingerprint(text): fingerprint_tokens(tokenize(text));
+| def fingerprint(text): fingerprint_tokens(tokenize(text));
 
 # Returns the fingerprint of a text over runs of `n` words, which also reflects word order.
-def fingerprint_shingles(text, n): fingerprint_tokens(shingles(tokenize(text), n));
+| def fingerprint_shingles(text, n): fingerprint_tokens(shingles(tokenize(text), n));
 
-# Returns the number of positions where two fingerprints differ.
-def distance(a, b):
+# Returns the number of positions where two fingerprints differ. Xoring them as bytes leaves a 0
+# byte wherever they agree, so the bytes that remain after taking the zeros out are the differences.
+| def distance(a, b):
   if (len(a) != len(b)):
     error("simhash: fingerprints differ in length: " + to_string(len(a)) + " and " + to_string(len(b)))
   else:
-    do
-      var d = 0
-      | var i = 0
-      | let n = len(a)
-      | let _ = while (i < n):
-          d = d + if (a[i] != b[i]): 1 else: 0
-          | i = i + 1
-        end
-      | d
-    end
+    len(replace(xor(to_bytes(a), to_bytes(b)), to_bytes([0]), to_bytes([])))
 end
 
 # Returns true if two fingerprints differ in at most `max_distance` positions.
-def near(a, b, max_distance): distance(a, b) <= max_distance;
+| def near(a, b, max_distance): distance(a, b) <= max_distance;
 
 # Groups fingerprints whose distance chains within `max_distance`, and returns the groups as arrays
 # of indexes, ordered by their smallest index.
 #
 # Two fingerprints within `max_distance` of each other always share one of `max_distance + 1`
 # slices of their bits, so only fingerprints that share a slice are compared.
-def cluster_fingerprints(fps, max_distance):
+| def cluster_fingerprints(fps, max_distance):
   if (max_distance < 0 || max_distance > 64):
     error("simhash: max distance must be between 0 and 64: " + to_string(max_distance))
   else:
@@ -140,9 +162,12 @@ def cluster_fingerprints(fps, max_distance):
                 end
               | var p = s
               | let _ = while (p < e):
-                  var q = p + 1
+                  let ip = keyed[p][1]
+                  | let fp = fps[ip]
+                  | var q = p + 1
                   | let _ = while (q < e):
-                      uf = if (distance(fps[keyed[p][1]], fps[keyed[q][1]]) <= max_distance): ds::unionfind::union(uf, keyed[p][1], keyed[q][1]) else: uf
+                      let iq = keyed[q][1]
+                      | uf = if (distance(fp, fps[iq]) <= max_distance): ds::unionfind::union(uf, ip, iq) else: uf
                       | q = q + 1
                     end
                   | p = p + 1
@@ -157,4 +182,4 @@ end
 
 # Groups texts whose fingerprints chain within `max_distance`, as arrays of indexes ordered by their
 # smallest index. Texts that match nothing come back as groups of one.
-def clusters(texts, max_distance): cluster_fingerprints(map(texts, fn(t): fingerprint(t);), max_distance);
+| def clusters(texts, max_distance): cluster_fingerprints(map(texts, fn(t): fingerprint(t);), max_distance);
